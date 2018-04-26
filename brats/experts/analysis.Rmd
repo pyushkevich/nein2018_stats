@@ -1,0 +1,725 @@
+---
+title: "ITK-SNAP BRATS Radiologists Notebook"
+output:
+  html_notebook: default
+  pdf_document: default
+---
+
+# Inter-Rater Analysis
+
+Load and display the inter-rater data
+
+```{r}
+library(reshape2)
+
+# Read the data
+X<-read.table("interrater.txt", col.names = c('Rater1','Rater2','Case','Complete','Core','Enh'),
+              na.strings = c('nan','-nan'));
+
+# Reshape so that the different measures are on different lines
+Xl<-melt(X, id.vars = c('Rater1','Rater2','Case'), 
+         variable.name = "Region", value.name = "Dice");
+
+# Assign a grade variable based on ID
+Xl$Grade='HG';
+Xl$Grade[grep('LG',Xl$Case)]='LG';
+Xl$Grade=as.factor(Xl$Grade);
+
+# Merge the Rater1 and Rater2 columns into a rater pair column
+Xl$RaterPair=paste(Xl$Rater1,'vs.',Xl$Rater2);
+
+# Enhancing core label should not be compared for low-grade tumors
+Xl$Dice[Xl$Grade == 'LG' & Xl$Region == 'Enh']=NA;
+
+Xl
+```
+
+Plot the inter-rater overlap by pair of radiologists and aggregating over all pairs.
+
+```{r}
+library(ggplot2)
+
+ggplot(data = subset(Xl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~RaterPair) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Inter-Rater Reliability: All Grades", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.1)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+
+ggplot(data = subset(Xl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Grade) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Inter-Rater Reliability: All Raters", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.1)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+
+ggplot(data = subset(Xl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Grade * RaterPair) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Inter-Rater Reliability", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.2)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+
+```
+Compute the mean and standard deviation for inter-rater Dice, grouping by rater pair, tumor grade, and region
+
+```{r}
+library(dplyr)
+
+# This function will be used to generate summary tables for Dice in different 
+# experiments. It computes mean (sd) and median by grade, region and if needed by
+# rater.
+dice.table.region <- function(data, group_vars)
+{
+  zz1=data %>%
+    group_by(Grade, Region)%>% 
+    summarise(MeanSd=sprintf("%4.2f (%4.2f)",round(mean(Dice),2), round(sd(Dice),2)),
+              Median=round(median(Dice),2)) %>% 
+    arrange(Grade, Region);
+  
+  zz2=data %>%
+    group_by(Region)%>% 
+    summarise(MeanSd=sprintf("%4.2f (%4.2f)",round(mean(Dice),2), round(sd(Dice),2)),
+              Median=round(median(Dice),2), Grade="All") %>% 
+    arrange(Region);
+  
+  bind_rows(zz1, zz2)
+}
+
+# *** FIRST TWO COLUMNS OF TABLE 3 ***
+dice.table.region(subset(Xl,!is.na(Dice)))
+dice.table.region(subset(Xl,!is.na(Dice) & Rater1=='joel' & Rater2=='eric'))
+dice.table.region(subset(Xl,!is.na(Dice) & Rater1=='eric' & Rater2=='suyash'))
+dice.table.region(subset(Xl,!is.na(Dice) & Rater1=='joel' & Rater2=='suyash'))
+
+```
+
+Overlaps for the subset of 15 scans that are in Menze's intra-rater analysis
+```{r}
+library(dplyr)
+
+# *** FIRST TWO COLUMNS OF TABLE 4 ***
+dice.table.region(subset(Xl,!is.na(Dice) & !grepl('2..',Case)))
+```
+
+Do the same analysis for the Menze inter-rater data
+```{r}
+# *** LAST TWO COLUMNS OF TABLE 4 ***
+menze.inter = read.csv('menze_interrater.csv', header=TRUE)
+dice.table.region(subset(menze.inter,!is.na(Dice)))
+```
+
+
+Plot overlaps for different cases
+```{r}
+require(lattice)
+bwplot.stg = list(box.rectangle=list(col='black', fill='lightgray'), 
+                  box.umbrella=list(col='black',lty='solid'));
+bwplot(Dice ~ Region | Case, data = Xl, pch='|',  
+       main="Radiologists' Inter-rater Dice - By Case",
+       par.settings = bwplot.stg);
+```
+
+
+# Intra-Rater Analysis
+
+Load and display the intra-rater data
+
+```{r}
+# Read the data
+Y<-read.table("intrarater.txt", col.names = c('Rater','Case','Complete','Core','Enh'),
+              na.strings = c('nan','-nan'));
+
+# Reshape so that the different measures are on different lines
+Yl<-melt(Y, id.vars = c('Rater','Case'), 
+         variable.name = "Region", value.name = "Dice");
+
+# Assign a grade variable based on ID
+Yl$Grade='HG';
+Yl$Grade[grep('LG',Yl$Case)]='LG';
+Yl$Grade=as.factor(Yl$Grade);
+
+# Enhancing core label should not be compared for low-grade tumors
+Yl$Dice[Yl$Grade == 'LG' & Yl$Region == 'Enh']=NA;
+
+Yl
+```
+
+Plot the intra-rater overlap by radiologist and aggregating over all radiologists
+
+```{r}
+
+ggplot(data = subset(Yl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Rater) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Intra-Rater Reliability: All Grades", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.1)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+
+ggplot(data = subset(Yl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Grade) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Intra-Rater Reliability: All Raters", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.1)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+
+ggplot(data = subset(Yl, !is.na(Dice)), aes(x=Region, y=Dice)) +
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Grade * Rater) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Radiologists' Intra-Rater Reliability", 
+       y = "Dice Coefficient", x = "Region") + 
+  scale_y_continuous(breaks=seq(0,1,0.2)) +
+  scale_x_discrete(labels = c("Complete","Tumor Core","Enh. Core"))
+```
+
+Compute the mean and standard deviation for intra-rater Dice, grouping by rater pair, tumor grade, and region
+
+```{r}
+
+# *** COLUMNS 4-5 in TABLE 3 ***
+subset(Yl,!is.na(Dice))%>%dice.table.region()
+
+```
+
+
+Make the same calculation for the Menze intra-rater dataset
+
+```{r}
+
+
+```
+
+
+ICC analysis, inter-rater and intra-rater
+
+```{r}
+## Plot ICC =============
+library('psych')
+
+# Define my own ICC function that handles NAs. If both entries are NA, we
+# drop the row, otherwise we change the NA to 0
+my.icc<-function(X)
+{
+  iccval=NA;
+  
+  # Drop rows with both NA's
+  Y = X[!apply(is.na(X),1,all),]
+  
+  # Replace remaining NA's with 0
+  Y[is.na(Y)] = 0;
+  
+  # Do icc
+  if(dim(Y)[1] >= 2)
+  {
+    result = ICC(Y);
+    iccval = result$results$ICC[2];     
+  }
+  
+  # Return the value of interest
+  iccval
+}
+
+# Read the table of volumes
+V<-read.table('volumes.txt',header=FALSE,col.names = c("Rater","CASE","Region","Volume"));
+
+# Compute intrarater ICC for each region, high-grade only
+V$Grade=if_else(grepl("LG.*",V$CASE),"LG","HG");
+
+# We do not consider Enh for LG
+V = subset(V,!(Grade=='LG' & Region=='Enh'));
+
+# Get the initial (non-repeat) subset
+V.inter = subset(V, !grepl("repeat", CASE))
+
+T_icc=matrix(NA,3,3,dimnames=list(c("HG","LG","All"),c("Complete","Core","Enh")))
+for(anat in colnames(T_icc))
+{
+  q = dcast(subset(V.inter, Region==anat), CASE + Grade ~ Rater, value.var = "Volume");
+  T_icc[1,anat] = my.icc(q[q$Grade == 'HG',3:5])
+  T_icc[2,anat] = my.icc(q[q$Grade == 'LG',3:5])
+  T_icc[3,anat] = my.icc(q[,3:5]);
+}
+
+# *** COLUMN 3 in TABLE 3 ***
+melt(round(T_icc,2)) %>% arrange(Var1,Var2)
+
+```
+
+
+
+Now compute the intra-rater ICC. For intra-rater we need to perform separate analysis for each
+rater and then average across raters. ICC is probably meaningless within-grade, because of how few subject there are.
+
+```{r}
+# Massage the data so that each row represents a rater/case/structure combo with two volume measurements
+V.intra=V;
+V.intra$Repeat=if_else(grepl("_repeat",V$CASE),"Repeat","Orig");
+V.intra$CASE=sub("_repeat","",V.intra$CASE)
+
+V.intra.wide=dcast(V.intra, CASE + Rater + Region + Grade~ Repeat, value.var = 'Volume', fun.aggregate = mean)
+V.intra.wide = subset(V.intra.wide, is.finite(Repeat));
+
+# Compute ICC for each rater/structure combo (i.e. grouping over case)
+V.intra.icc = group_by(V.intra.wide, Rater, Region) %>% do(data.frame(ICC=ICC(subset(.,select=c(Orig,Repeat)))$results$ICC[2]))
+
+# *** COLUMN 6 in TABLE 3 ***
+V.intra.icc %>% group_by(Region) %>% summarize(Mean=mean(ICC))
+V.intra.icc
+
+# Now also group by Grade - although this seems absurd
+V.intra.icc.grade = group_by(V.intra.wide, Rater, Region, Grade) %>% do(data.frame(ICC=ICC(subset(.,select=c(Orig,Repeat)))$results$ICC[2]))
+
+```
+Provide some sort of a BA-plot for the radiologists so we can see "what the hell is going on" with the ICC.
+```{r}
+
+reg.rename = c("Complete" = "Complete", "Core" = "Tumor Core", "Enh" = "Enh. Tumor");
+
+# Intra-rater BA
+gg.intra = 
+  ggplot(data=V.intra.wide, 
+         aes(x=0.001 * (Orig+Repeat) / 2, 
+             y=0.001 * (Repeat - Orig), 
+             col = Rater, shape = Grade)) +
+  geom_point() + 
+  facet_wrap(~ Region, dir="v", labeller = as_labeller(reg.rename)) + 
+  theme_classic() + 
+  coord_fixed(1, xlim=c(0,400), ylim=c(-100,100)) +
+  scale_color_discrete(labels=c("Expert 1","Expert 2","Expert 3")) +
+  scale_shape_discrete(labels=c("High","Low")) +
+  labs(title = "Neuroradiologists' Intra-Rater BA Plot",
+       x = "Average volume between attempts (ml)", 
+       y = "Volume difference between attempts (ml)")
+
+gg.intra
+```
+
+
+```{r}
+V.inter.pair = rbind(
+  merge(subset(V.inter, Rater=='eric'),
+        subset(V.inter,Rater=='joel'),by=c('CASE','Region','Grade')),
+  merge(subset(V.inter, Rater=='joel'),
+        subset(V.inter,Rater=='suyash'),by=c('CASE','Region','Grade')),
+  merge(subset(V.inter, Rater=='suyash'),
+        subset(V.inter,Rater=='eric'),by=c('CASE','Region','Grade')))
+
+# Inter-rater BA
+gg.inter = 
+  ggplot(data=V.inter.pair, 
+         aes(x=0.001 * (Volume.x + Volume.y) / 2, 
+             y=0.001 * (Volume.x - Volume.y), 
+             col = paste(Rater.x," vs ", Rater.y), shape = Grade)) +
+  geom_point() + 
+  facet_wrap(~ Region, dir="v", labeller = as_labeller(reg.rename)) + 
+  theme_classic() +
+  coord_fixed(1, xlim=c(0,400), ylim=c(-100,100)) +
+  scale_color_discrete(labels=c("Expert 1 vs 2","Expert 2 vs 3","Expert 3 vs 1")) +
+  scale_shape_discrete(labels=c("High","Low")) +
+  labs(title = "Neuroradiologists' Inter-Rater BA Plot",
+       x = "Average volume between raters (ml)", 
+       y = "Volume difference between raters (ml)",
+       color = "Rater Pair")
+
+gg.inter
+
+```
+
+```{r}
+
+require(cowplot)
+
+g.both = plot_grid(gg.inter, gg.intra, align = "v", nrow = 1, rel_heights = c(1/2, 1/2))
+g.both
+ggsave("neuro_ba.pdf", g.both)
+
+```
+
+Radiologists' Timing
+
+```{r}
+# Read the times
+T.rad <- read.csv('timing.csv', header=TRUE);
+
+# Add the LG/HG column
+T.rad$Grade=if_else(grepl("LG.*",T.rad$Case),"LG","HG");
+
+# Compute the time column in minutes
+T.rad$Time = T.rad$Min + T.rad$Sec / 60;
+
+# Compute summary stats on time
+T.rad %>% group_by(Rater) %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+
+# Compute summary stats on time
+T.rad %>% group_by(Grade) %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+
+# Compute summary stats by grade
+T.rad %>% group_by(Grade,Rater) %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+
+```
+
+```{r}
+# Read the timings for AP and merge
+T.ap<-read.csv("timing_artem.csv",header=TRUE)
+T.ap$Rater = as.factor("AP");
+T.ap$Min = T.ap$Time;
+T.ap$Sec = 0;
+T.ap$Grade = if_else(grepl("LG.*",T.ap$Case),"LG","HG");
+T.ap = subset(T.ap, !is.na(Time));
+
+# Combine the tables
+T.all = bind_rows(T.ap, T.rad)
+T.all$Case = as.factor(T.all$Case)
+T.all$Rater = as.factor(T.all$Rater)
+T.all
+
+# Compute summary stats on time
+T.all %>% group_by(Rater) %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+
+# Compute summary stats by grade
+T.all %>% group_by(Grade,Rater) %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+```
+
+```{r}
+ggplot(T.all, aes(x=Rater, y=Time)) +
+  geom_boxplot(fill="lightgray") + 
+  facet_grid(~Grade,labeller = as_labeller(c("HG" = "High Grade", "LG" = "Low Grade"))) +
+  scale_x_discrete(labels=c("Non-Expert","Expert 1","Expert 2","Expert 3")) +
+  theme_classic() + 
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="ITK-SNAP BRATS Segmentation Time",
+       y = "Segmentation Time (min)")
+
+ggsave("timing_all4.pdf")
+```
+Statistical test that AP segmentation is faster than others. We need to use repeats as multiple observations per subject.
+
+I am following this tutorial: http://www.bodowinter.com/tutorial/bw_LME_tutorial2.pdf
+
+
+```{r}
+library(lme4)
+
+# Get the repeat and original observations
+T.lme = T.all;
+T.lme$Repeat=if_else(grepl("_repeat",T.lme$Case),"Repeat","Orig");
+T.lme$Case=as.factor(sub("_repeat","",T.lme$Case));
+
+anova.pair <- function(rater1, rater2)
+{
+  # Compare AP to suyash
+  T.pair=subset(T.lme, Rater==rater1 | Rater == rater2);
+  m = lmer(Time ~ Rater + Grade + (1 | Case), data=T.pair, REML=F)
+  m.null = lmer(Time ~ Grade  + (1 | Case), data=T.pair, REML=F)
+  anova(m.null, m)
+}
+
+# Flatten data for wilcox tests
+T.w = dcast(T.lme %>% group_by(Rater,Case) %>% summarise(Time=mean(Time)), Case ~ Rater, value.var = "Time")
+
+
+wilcox.test(T.w$eric - T.w$AP)
+wilcox.test(T.w$joel - T.w$AP)
+wilcox.test(T.w$suyash - T.w$AP)
+wilcox.test(T.w$eric - T.w$suyash)
+wilcox.test(T.w$joel - T.w$suyash)
+wilcox.test(T.w$eric - T.w$joel)
+
+```
+
+Artem vs. Suyash: 
+```{r}
+anova.pair('AP','suyash')
+```
+
+Artem vs. Eric
+```{r}
+anova.pair('AP','eric')
+```
+
+Artem vs. Joel
+```{r}
+anova.pair('AP','joel')
+```
+
+Eric vs. Joel
+```{r}
+anova.pair('eric','joel')
+```
+
+Joel vs. Suyash
+```{r}
+anova.pair('joel','suyash')
+```
+
+Suyash vs. Eric
+```{r}
+anova.pair('suyash','eric')
+```
+
+
+Also, test if there is an effect of grade - duh!
+
+```{r}
+m = lmer(Time ~ Grade + Rater + (1 | Case), data=T.all, REML=F)
+m.null = lmer(Time ~ Rater  + (1 | Case), data=T.all, REML=F)
+anova(m.null, m)
+```
+
+Radiologists Number of strokes
+=====
+
+```{r}
+# Read the stroke data
+S.rad.axis <- read.table("all_strokes.txt",col.names = c("Rater","Case","Label","Axis","Count"));
+
+# Drop eric's x and y samples, because he tended to place samples on every
+# slice which means that the x and y counts are completely screwed up
+# however he only traced on the z axis
+S.rad.axis = subset(S.rad.axis, !(Rater == 'eric' & Axis != 'z'))
+S.rad.axis = subset(S.rad.axis, Label <= 6)
+
+# Combine axes
+S.rad = S.rad.axis %>% group_by(Rater, Case, Label) %>% summarise(Count = sum(Count));
+S.rad$Label=factor(S.rad$Label,labels=c("Edema","NE Core","Enh Core","Necr","GM+WM","CSF"))
+
+ggplot(data=S.rad, aes(x=Label,y=Count,fill=Rater)) +
+  geom_boxplot() + 
+  theme_classic() + 
+  labs(title="Radiologists: Number of Training Paint Strokes by Label",
+       y = "Average Strokes per Attempt", x = "Label")
+```
+
+
+Take a look at the number of voxels instead of number of strokes - easier to compare
+```{r}
+SV.rad<-read.table("sample_vols.txt", col.names = c("Rater","Case","Label","Voxels"));
+SV.ap<-read.table("artem_sample_vols.txt", col.names = c("Rater","Case","Label","Voxels"));
+SV=bind_rows(SV.rad,SV.ap);
+SV=subset(SV, Label <= 6);
+SV$Label=factor(SV$Label,labels=c("Edema","NE Core","Enh Core","Necr","GM+WM","CSF"))
+SV$Rater=as.factor(SV$Rater);
+SV$Case=as.factor(SV$Case);
+
+ggplot(data=SV, aes(x=Label,y=Voxels,fill=Rater)) +
+  geom_boxplot() + 
+  theme_classic() + 
+  scale_y_log10(breaks=c(10,100,1000,10000)) +
+  scale_fill_discrete(labels=c("Non-Expert","Expert 1","Expert 2","Expert 3")) +
+  labs(title="Number of Voxels Labeled for Classifier Training",
+       y = "Training Voxels per Case", x = "Presegmentation Tissue Class")
+
+ggsave("training_voxels.pdf")
+
+```
+
+Does the number of voxels differ between radiologists?
+```{r}
+q=dcast(SV %>% group_by(Case,Rater) %>% summarise(Voxels=sum(Voxels)), Case ~ Rater)
+q1 = q[,c("artem","eric")];
+
+colMeans(q[,2:5], na.rm=TRUE)
+
+wilcox.test(q$artem - q$eric, alternative = "less")$p.value * 2
+wilcox.test(q$joel - q$artem, alternative = "less")$p.value * 2
+wilcox.test(q$suyash - q$artem, alternative = "less")$p.value * 2
+
+wilcox.test(q$joel - q$eric, alternative = "less")$p.value * 2
+wilcox.test(q$suyash - q$joel, alternative = "less")$p.value * 2
+wilcox.test(q$suyash - q$eric, alternative = "less")$p.value * 2
+
+```
+
+
+
+RADIOLOGISTS evaluated on BRATS Data
+=====
+```{r}
+# Read the full BRATS evaluation report (artem+radiologists)
+B.all <- read.csv("brats_all_may2017.csv",header=TRUE);
+B.all$Region=as.factor(B.all$Region);
+levels(B.all$Region)=c("Complete","Core","Enh");
+
+# -1 in Dice column is NA
+B.all$Dice[B.all$Dice==-1] = NA;
+
+# Grade
+B.all$Grade[grepl('LG',B.all$Case)]='LG';
+B.all$Grade[!grepl('LG',B.all$Case)]='HG';
+
+# Drop Enh for LG
+B.all = subset(B.all, (Region != "Enh" | Grade != "LG"));
+
+# Plot all raters BRATS evaluation
+(ggplot(data=B.all,
+        aes(x = Region, y = Dice))
+  + geom_boxplot(fill="lightgray") 
+  + facet_grid(~Grade * Rater) + theme_classic()
+  + stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE)
+  + labs(title="Dice Coefficient for All Raters in BRATS Leaderboard Evaluation", 
+         y="Dice Coefficient"))
+```
+
+
+```{r}
+require(ggplot2)
+require(dplyr)
+
+# Focus only on the subset of cases that have been segmented by all
+q = dcast(B.all, Case + Region + Grade ~ Rater, value.var = 'Dice', fun.aggregate = mean)
+
+# Remelt this subset after dropping NA rows
+p = melt(q[complete.cases(q),],id.vars = c('Case','Region','Grade'), variable.name = 'Rater', value.name = 'Dice')
+
+# Plot 
+(ggplot(data=p,
+        aes(x = Region, y = Dice))
+  + geom_boxplot(fill="lightgray") 
+  + facet_grid(~Grade * Rater) + theme_classic()
+  + stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE)
+  + labs(title="Dice Coefficient for All Raters in BRATS Leaderboard Evaluation", 
+         y="Dice Coefficient"))
+
+# Generate summary stats
+
+# *** ALL COLUMNS IN TABLE 5 ***
+subset(p, Rater=='eric') %>% dice.table.region()
+subset(p, Rater=='joel') %>% dice.table.region()
+subset(p, Rater=='suyash') %>% dice.table.region()
+subset(p, Rater=='artem') %>% dice.table.region()
+
+```
+
+We also want to know in the above tables who does statistically differ from the best
+```{r}
+rater.wilcox = function(qsel)
+{
+  i.best = which.max(apply(qsel[,4:7],MARGIN=2,FUN=mean));
+  result = matrix(nrow=1,ncol=4);
+  for(i in 1:4)
+  {
+    if(i != i.best) {
+      result[1,i] = wilcox.test(qsel[,3+i] - qsel[,3+i.best])$p.value;
+    }
+    else {
+      result[1,i] = NA;
+    }
+  }
+  data.frame(round(result,3))
+}
+
+qc = q[complete.cases(q),];
+bind_rows(
+  subset(qc, Region=='Complete' & Grade=='HG') %>% rater.wilcox(),
+  subset(qc, Region=='Core' & Grade=='HG') %>% rater.wilcox(),
+  subset(qc, Region=='Enh' & Grade=='HG') %>% rater.wilcox(),
+  subset(qc, Region=='Complete' & Grade=='LG') %>% rater.wilcox(),
+  subset(qc, Region=='Core' & Grade=='LG') %>% rater.wilcox(),
+  subset(qc, Region=='Complete') %>% rater.wilcox(),
+  subset(qc, Region=='Core') %>% rater.wilcox(),
+  subset(qc, Region=='Enh') %>% rater.wilcox())
+
+
+```
+
+
+Perform the analysis only on the Menze subset
+```{r}
+l = levels(q$Case);
+
+cases.rad.menze = unique(subset(p, !grepl("^2",Case))$Case);
+p.menze = subset(p, Case %in% cases.rad.menze);
+
+# Plot 
+(ggplot(data=p.menze,
+        aes(x = Region, y = Dice))
+  + geom_boxplot(fill="lightgray") 
+  + facet_grid(~Grade * Rater) + theme_classic()
+  + stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE)
+  + labs(title="Dice Coefficient for All Raters in BRATS Leaderboard Evaluation", 
+         y="Dice Coefficient"))
+
+# Generate summary stats
+p.menze %>% group_by(Rater,Grade,Region) %>% summarise(mean=mean(Dice), sd=sd(Dice), median=median(Dice)) %>% arrange(Grade,Region,Rater)
+
+# Generate summary stats
+p.menze %>% group_by(Rater,Region) %>% summarise(mean=mean(Dice) %>% round(2), sd=sd(Dice) %>% round(2), median=median(Dice) %>% round(2)) %>% arrange(Region,Rater) 
+```
+
+Results to put in a table
+```{r}
+subset(p.menze, Rater=='eric') %>% dice.table.region()
+subset(p.menze, Rater=='joel') %>% dice.table.region()
+subset(p.menze, Rater=='suyash') %>% dice.table.region()
+
+```
+Now also include rank against Menze paper
+```{r}
+
+# Load rank data
+menze.table = read.csv("menze_fig7.csv");
+
+# Function to add rank to a column
+menze.rank = function(z)  {
+  z$Rank = 0;
+  for(i in seq(1,dim(z)[1])) {
+    dice.i = 100 * as.double(sub(" .*","",z$MeanSd[i]));
+    col.i = paste(z$Region[i],z$Grade[i],sep=".");
+    r = rank(c(-dice.i, -menze.table[,col.i]));
+    z$Rank[i] = r[1];
+  }
+  z
+}
+
+# *** TABLE 6 ALL COLUMNS ***
+subset(p.menze, Rater=='eric') %>% dice.table.region() %>% menze.rank
+subset(p.menze, Rater=='joel') %>% dice.table.region() %>% menze.rank
+subset(p.menze, Rater=='suyash') %>% dice.table.region() %>% menze.rank
+subset(p.menze, Rater=='artem') %>% dice.table.region() %>% menze.rank
+```
+
+How does the average Dice rank
+```{r}
+mm=(menze.table$Complete.All+menze.table$Core.All+menze.table$Enh.All)/3;
+ad.eric = subset(p.menze, Rater=='eric') %>% group_by(Region) %>% summarise(mean=mean(Dice)) %>% summarise(mm=mean(mean));
+
+ad.joel = subset(p.menze, Rater=='joel') %>% group_by(Region) %>% summarise(mean=mean(Dice)) %>% summarise(mm=mean(mean));
+
+ad.suyash = subset(p.menze, Rater=='suyash') %>% group_by(Region) %>% summarise(mean=mean(Dice)) %>% summarise(mm=mean(mean));
+
+ad.artem = subset(p.menze, Rater=='artem') %>% group_by(Region) %>% summarise(mean=mean(Dice)) %>% summarise(mm=mean(mean));
+
+
+rank(c(-100 * ad.eric$mm, -mm))[1]
+rank(c(-100 * ad.joel$mm, -mm))[1]
+rank(c(-100 * ad.suyash$mm, -mm))[1]
+rank(c(-100 * ad.artem$mm, -mm))[1]
+
+```
+
+Dice vs. training voxels
+```{r}
+g.sv = SV %>% group_by(Case,Rater) %>% summarise(Voxels=sum(Voxels))
+g.dice = p %>% group_by(Case,Rater) %>% summarise(Dice=mean(Dice))
+g.sd = merge(g.sv, g.dice)
+
+ggplot(g.sd, aes(x=Voxels, y=Dice, color=Rater)) +
+  geom_point() + theme_classic()
+```

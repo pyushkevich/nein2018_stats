@@ -1,0 +1,156 @@
+---
+title: "Artem BRATS plots for ITK-SNAP paper"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2);
+library(reshape2);
+
+X<-read.csv('artem_intra_hg.csv',header = TRUE)
+Xl<-melt(X, variable.name = "Region", value.name = "Dice", id.vars = c("CASE"))
+Xl$Grade="HG";
+
+Y<-read.csv('artem_intra_lg.csv',header = TRUE)
+Yl<-melt(Y, variable.name = "Region", value.name = "Dice", id.vars = c("CASE"))
+Yl$Grade="LG";
+
+Yl=subset(Yl, (Region != "enh"));
+
+AP.intra.dice = subset(rbind(Xl,Yl), !is.na(Dice))
+colnames(AP.intra.dice) = c("Case","Region","Dice","Grade");
+#levels(AP.intra.dice$Region) <- c("Complete","Tumor Core","Enh. Core");
+
+# Plot this
+ggplot(data=AP.intra.dice, aes(x = Region, y = Dice)) + 
+  geom_boxplot(fill="lightgray") +
+  facet_wrap(~Grade, labeller = as_labeller(c("HG"="High Grade","LG"="Low Grade"))) +
+  theme_classic() +
+  stat_summary(fun.y=mean, geom="point", color="red", shape=18, size=3,show.legend = FALSE) +
+  labs(title="Intra-Rater Dice Coefficient for Non-Expert Rater in BRATS Leaderboard dataset", 
+       y="Dice Coefficient") +
+  scale_y_continuous(breaks=seq(0,1,0.1)) +
+  scale_x_discrete(labels=c("Complete","Tumor Core","Enh. Core"))
+
+ggsave("artem_intrarater_barplot.pdf");
+```
+```{r, digits=2}
+library(dplyr)
+
+# This function will be used to generate summary tables for Dice in different 
+# experiments. It computes mean (sd) and median by grade, region and if needed by
+# rater.
+dice.table.region <- function(data, group_vars)
+{
+  zz1=data %>%
+    group_by(Grade, Region)%>% 
+    summarise(MeanSd=sprintf("%4.2f (%4.2f)",round(mean(Dice),2), round(sd(Dice),2)),
+              Median=round(median(Dice),2)) %>% 
+    arrange(Grade, Region);
+  
+  zz2=data %>%
+    group_by(Region)%>% 
+    summarise(MeanSd=sprintf("%4.2f (%4.2f)",round(mean(Dice),2), round(sd(Dice),2)),
+              Median=round(median(Dice),2), Grade="All") %>% 
+    arrange(Region);
+  
+  bind_rows(zz1, zz2)
+}
+
+# *** TABLE 2 COLUMNS 1-2 ***
+dice.table.region(AP.intra.dice)
+```
+Same analysis, but now subset evaluated in Menze
+```{r, digits=2}
+
+# *** TABLE 2 COLUMNS 4-5 ***
+AP.intra.dice.menze = subset(AP.intra.dice, Case < 200)
+dice.table.region(AP.intra.dice.menze)
+
+```
+
+```{r}
+## Plot ICC =============
+library('psych')
+
+# Define my own ICC function that handles NAs. If both entries are NA, we
+# drop the row, otherwise we change the NA to 0
+my.icc<-function(X)
+{
+  iccval=NA;
+  
+  # Drop rows with both NA's
+  Y = X[!apply(is.na(X),1,all),]
+  
+  # Replace remaining NA's with 0
+  Y[is.na(Y)] = 0;
+  
+  # Do icc
+  if(dim(Y)[1] >= 2)
+  {
+    result = ICC(Y);
+    iccval = result$results$ICC[2];     
+  }
+  
+  # Return the value of interest
+  iccval
+}
+
+V<-read.csv('artem_intra_vols.csv',header=TRUE)
+Vwide<-reshape(V, idvar = "CASE", timevar = "Attempt", direction = "wide");
+
+T_icc=matrix(NA,3,3,dimnames=list(c("All","HG","LG"),c("Complete","Core","Enh")))
+for(anat in colnames(T_icc))
+{
+  iccrows = Vwide[,paste(anat,c(".1",".2"),sep="")];
+  T_icc[1,anat] = my.icc(iccrows);
+  T_icc[2,anat] = my.icc(iccrows[Vwide$Grade.1=='HG',]);
+  T_icc[3,anat] = my.icc(iccrows[Vwide$Grade.1=='LG',]);  
+}
+
+# *** TABLE 2 COLUMN 3 ***
+round(T_icc,2)
+
+```
+
+Again, repeat the ICC calculation for the Menze subset
+ 
+```{r}
+
+Vwide.menze = subset(Vwide, CASE < 10000);
+
+T_icc.menze=matrix(NA,3,3,dimnames=list(c("All","HG","LG"),c("Complete","Core","Enh")))
+for(anat in colnames(T_icc))
+{
+  iccrows = Vwide.menze[,paste(anat,c(".1",".2"),sep="")];
+  T_icc.menze[1,anat] = my.icc(iccrows);
+  T_icc.menze[2,anat] = my.icc(iccrows[Vwide.menze$Grade.1=='HG',]);
+  T_icc.menze[3,anat] = my.icc(iccrows[Vwide.menze$Grade.1=='LG',]);  
+}
+
+# *** TABLE 2 COLUMN 6 ***
+round(T_icc.menze,2)
+
+```
+
+```{r}
+library('BlandAltmanLeh');
+
+## Bland-Altman plots
+anat="Enh";
+ba.stats <- bland.altman.stats(Vwide[,paste(anat,".1",sep="")], Vwide[,paste(anat,".2",sep="")]);
+plot(ba.stats$means, ba.stats$diffs, col=Vwide$Grade.1, pch=16,
+     main=paste("Artem's Intra-Rater BA Plot: ", anat),
+     asp=1,
+     xlab="Average Volume", ylab="Volume Difference")
+abline(h = ba.stats$lines, lty=c(2,3,2), col=c("lightblue","blue","lightblue"), 
+       lwd=c(3,2,3))
+legend(x = "bottomleft", legend = c("HG","LG"), fill = 1:2)
+
+
+bland.altman.plot(Vwide$Complete.1,Vwide$Complete.2,main="Artem's Intra-Rater: Complete Tumor")
+bland.altman.plot(Vwide$Core.1,Vwide$Core.2,main="Artem's Intra-Rater: Tumor Core")
+bland.altman.plot(Vwide$Enh.1,Vwide$Enh.2,main="Artem's Intra-Rater: Enh Region")
+
+
+```

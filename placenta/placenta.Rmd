@@ -1,0 +1,18 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+require(dplyr)
+require(ggplot2)
+
+
+X<-read.csv("placenta_testing.csv")
+
+X %>% summarise(mean=mean(Dice), median=median(Dice), sd=sd(Dice))
+
+X %>% summarise(mean=mean(Time), median=median(Time), sd=sd(Time))
+```
+
